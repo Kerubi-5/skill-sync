@@ -108,7 +108,18 @@ function sourceRepoShortSha() {
   return run(sourceRepoRoot, "git", ["rev-parse", "--short", "HEAD"]) || null
 }
 
+/**
+ * The mount path inside a CI container (e.g. GitHub Actions' /github/workspace)
+ * is the same for every repo, so the directory basename isn't useful there —
+ * prefer CI-provided env vars that actually name the repo.
+ */
 function sourceRepoName() {
+  if (process.env.GITHUB_REPOSITORY) {
+    return process.env.GITHUB_REPOSITORY.split("/").pop()
+  }
+  if (process.env.CI_PROJECT_NAME) return process.env.CI_PROJECT_NAME
+  if (process.env.CIRCLE_PROJECT_REPONAME) return process.env.CIRCLE_PROJECT_REPONAME
+
   const toplevel = run(sourceRepoRoot, "git", ["rev-parse", "--show-toplevel"])
   return toplevel ? toplevel.split("/").pop() : "source"
 }
