@@ -141,6 +141,26 @@ function resolveDestDir(config, destSlug) {
   return { dir: tempDir, isTemp: true }
 }
 
+/**
+ * Asks the remote directly rather than relying on refs/remotes/origin/HEAD,
+ * which some clone methods (e.g. `gh repo clone`) don't set up locally.
+ */
+function resolveDefaultBranch(destDir) {
+  const remoteHead = run(destDir, "git", ["ls-remote", "--symref", "origin", "HEAD"], {
+    allowFailure: true,
+  })
+  const match = /ref:\s*refs\/heads\/(\S+)\s+HEAD/.exec(remoteHead)
+  if (match) return match[1]
+
+  const local = run(
+    destDir,
+    "git",
+    ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    { allowFailure: true }
+  ).replace(/^origin\//, "")
+  return local || "main"
+}
+
 function main() {
   const config = loadConfig()
   const sourceDir = join(sourceRepoRoot, config.source)
@@ -152,10 +172,7 @@ function main() {
   const destSlug = normalizeDestSlug(config.destRepo)
   const { dir: destDir, isTemp } = resolveDestDir(config, destSlug)
 
-  const defaultBranch =
-    run(destDir, "git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-      .replace(/^origin\//, "")
-      .trim() || "main"
+  const defaultBranch = resolveDefaultBranch(destDir)
   run(destDir, "git", ["checkout", defaultBranch], { inherit: true })
   run(destDir, "git", ["pull", "--ff-only", "origin", defaultBranch], {
     inherit: true,
