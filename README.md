@@ -43,18 +43,53 @@ Add `skill-sync.config.json` to the root of the repo you're syncing *from*:
 
 ## What you need
 
-A GitHub token with **Contents: Read & write** and **Pull requests: Read &
-write** scoped to `destRepo` — a fine-grained personal access token works
-well. Store it as a CI secret (examples below call it `SKILL_SYNC_TOKEN`) and
-pass it through as the `GH_TOKEN` env var; the image's entrypoint wires `gh`
-and `git` to use it automatically.
+Whatever CI you use, the container ultimately just needs a `GH_TOKEN` with
+**Contents: Read & write** and **Pull requests: Read & write** on `destRepo`.
+Two ways to get one — pick based on how much setup you want:
+
+- **A GitHub App installation token (recommended).** Short-lived (~1 hour,
+  minted fresh per run), scoped to exactly the repos it's installed on, shows
+  up in history as its own bot identity rather than a person's account, and
+  never needs manual rotation. More setup up front; see below.
+- **A fine-grained personal access token.** Two minutes in the browser
+  (Settings → Developer settings → Fine-grained tokens → pick `destRepo`,
+  grant those two permissions), store the value directly as a secret. Simpler,
+  but it's a standing credential you'll need to remember to renew before it
+  expires.
+
+Either way, store the result as a CI secret and pass it through as `GH_TOKEN`
+— the image's entrypoint wires `gh` and `git` to use it automatically.
+
+### Setting up the GitHub App (one-time, reusable across every repo pair)
+
+1. **Create the App** — in the org or account that owns your destination
+   repo(s) (e.g. `github.com/organizations/<org>/settings/apps/new`):
+   - Disable the webhook ("Active" checkbox off — not needed here).
+   - Repository permissions: **Contents: Read and write**, **Pull requests:
+     Read and write**. Leave everything else at no access.
+   - Under "Where can this GitHub App be installed?", "Only on this account"
+     is enough if all your destination repos live in one place.
+2. **Generate a private key** on the App's settings page (Settings → General
+   → "Generate a private key") — downloads a `.pem` file. Note the **App ID**
+   shown near the top of that page too.
+3. **Install the App** (left sidebar → "Install App") on whichever repos it
+   needs to push to — you can select multiple.
+4. **Add two secrets** to each *source* repo (the one running the sync
+   workflow, not the destination) — do this yourself, e.g. via `gh`, so the
+   key never has to be pasted anywhere else:
+   ```bash
+   gh secret set SKILL_SYNC_APP_ID --repo <owner>/<source-repo>
+   gh secret set SKILL_SYNC_APP_PRIVATE_KEY --repo <owner>/<source-repo> < path/to/key.pem
+   ```
+   The same App ID + key work for every source repo whose sync targets a repo
+   this App is installed on — you only do steps 1–3 once, ever.
 
 ## Usage
 
 ### GitHub Actions
 
 No devDependency, no `pnpm install`, no `setup-node` — the image *is* the
-dependency:
+dependency. With the GitHub App (recommended):
 
 ```yaml
 name: Sync my-skill
@@ -68,6 +103,22 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SKILL_SYNC_APP_ID }}
+          private-key: ${{ secrets.SKILL_SYNC_APP_PRIVATE_KEY }}
+          owner: my-org
+          repositories: my-skill
+      - uses: docker://ghcr.io/kerubi-5/skill-sync:latest
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+```
+
+Or, with a plain PAT instead (skip the `app-token` step entirely):
+
+```yaml
       - uses: actions/checkout@v4
       - uses: docker://ghcr.io/kerubi-5/skill-sync:latest
         env:
@@ -112,6 +163,14 @@ jobs:
 Set `SKILL_SYNC_TOKEN` as a project environment variable and reference it as
 `GH_TOKEN` (CircleCI env vars are already available as `GH_TOKEN` if you name
 it that directly, or alias it in the job).
+
+*(GitLab CI and CircleCI examples above use a plain token for simplicity —
+the GitHub App still works from either, it just means minting the
+installation token yourself with a `curl`/JWT step instead of the
+one-line `actions/create-github-app-token`, since that's GitHub
+Actions–specific. See [GitHub's docs on generating installation access
+tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app)
+if you want App-based auth outside Actions.)*
 
 ### Plain `docker run` (local testing, Jenkins, Buildkite, anything else)
 
