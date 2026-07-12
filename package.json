@@ -1,6 +1,6 @@
 {
   "name": "skill-sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sync a skill package folder from a source repo into its dedicated published repo, opening a PR with the diff.",
   "type": "module",
   "license": "MIT",
