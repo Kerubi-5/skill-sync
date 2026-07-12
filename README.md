@@ -215,3 +215,7 @@ a real pipeline.
 ## License
 
 MIT
+
+## Direct commit (skip the PR)
+
+Set `"directCommit": true` in `skill-sync.config.json` (or pass `SKILL_SYNC_DIRECT_COMMIT=true`) to push the sync straight to the destination default branch instead of opening a PR. The push is non-forced, so a concurrent remote change fails loudly rather than being clobbered.

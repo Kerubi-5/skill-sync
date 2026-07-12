@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * skill-sync — syncs a skill package folder from a source repo into its
- * dedicated published repo, then opens a PR there with the diff.
+ * dedicated published repo. Opens a PR by default, or commits straight to the
+ * default branch when `directCommit: true` (config) or SKILL_SYNC_DIRECT_COMMIT=true.
  *
  * Reads `skill-sync.config.json` from the current working directory (the
  * source repo's root). Config fields:
@@ -11,6 +12,7 @@
  *                 falls back to cloning destRepo into a temp dir (used in CI)
  *   prTitle       (optional) PR title template
  *   prBodyIntro   (optional) first line of the PR body
+ *   directCommit  (optional) commit straight to the default branch, no PR
  *
  * Requires the `gh` CLI, authenticated with push + PR-create rights on destRepo
  * (in CI: `gh` picks up the `GH_TOKEN` env var automatically).
@@ -192,16 +194,23 @@ function main() {
   const repoName = sourceRepoName()
   const sha = sourceRepoShortSha()
   const date = new Date().toISOString().slice(0, 10)
-  const branch = `sync/${repoName}-${date}${sha ? `-${sha}` : ""}`
+  // Commit straight to the default branch when configured (no PR). Env override
+  // SKILL_SYNC_DIRECT_COMMIT wins so a caller workflow can force it.
+  const directCommit =
+    (process.env.SKILL_SYNC_DIRECT_COMMIT ?? "").toLowerCase() === "true" ||
+    config.directCommit === true
+  const branch = directCommit
+    ? defaultBranch
+    : `sync/${repoName}-${date}${sha ? `-${sha}` : ""}`
   const commitMessage =
     config.prTitle ??
     (sha
       ? `Sync skill from ${repoName} (${sha})`
       : `Sync skill from ${repoName}`)
 
-  // Reset to (or create) the branch from defaultBranch's tip before writing
-  // the sync, so a rerun on an already-synced branch never conflicts with
-  // dirty content left on defaultBranch's own working tree.
+  // Reset to (or create) the working branch from defaultBranch's tip before
+  // writing the sync, so a rerun never conflicts with dirty content. For direct
+  // commits this is defaultBranch itself.
   run(destDir, "git", ["checkout", "-B", branch, defaultBranch], {
     inherit: true,
   })
@@ -242,6 +251,18 @@ function main() {
 
   run(destDir, "git", ["add", "-A"], { inherit: true })
   run(destDir, "git", ["commit", "-m", commitMessage], { inherit: true })
+
+  if (directCommit) {
+    // Push straight to the default branch — no branch, no PR. Not forced, so a
+    // concurrent change on the remote fails loudly rather than clobbering.
+    run(destDir, "git", ["push", "origin", `HEAD:${defaultBranch}`], {
+      inherit: true,
+    })
+    console.log(`Committed sync directly to ${destSlug}@${defaultBranch}.`)
+    if (isTemp) rmSync(destDir, { recursive: true, force: true })
+    return
+  }
+
   run(destDir, "git", ["push", "--force", "-u", "origin", branch], {
     inherit: true,
   })
